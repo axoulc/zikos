@@ -1,0 +1,19 @@
+[package]
+name = "zikos-matrix"
+description = "Zikos Matrix client: login, encrypted session, sync, E2EE rooms, text send/receive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+matrix-sdk = { workspace = true }
+matrix-sdk-store-encryption = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+wiremock = { workspace = true }

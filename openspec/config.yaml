@@ -1,0 +1,54 @@
+schema: spec-driven
+
+context: |
+  Project: Zikos — cross-platform (Android/iOS/desktop) app for musicians.
+  E2EE chat over Matrix (matrix-sdk), Drive-like encrypted file tree synced
+  as room events, one-tap dictaphone, plus a self-hosted Rust blob server
+  (axum) storing client-encrypted audio only.
+
+  Stack policy: RUST-FIRST — Rust everywhere except the UI layer, which is
+  Flutter (Dart) in apps/zikos-app, bound to the Rust core via
+  flutter_rust_bridge. Pure-Rust deps (RustCrypto, hound, flacenc,
+  matrix-sdk), axum, tokio. Dart renders and routes only — no business logic
+  in Dart, no new services or tooling in other languages.
+
+  Workspace layout:
+  - crates/zikos-core    domain: event-sourced file tree, recording metadata (no I/O)
+  - crates/zikos-crypto  AES-256-GCM file encryption
+  - crates/zikos-audio   WAV encode/parse + recorder policy
+  - crates/zikos-server  axum blob server (Matrix-OpenID auth)
+  - apps/zikos-app       Flutter client shell (Dart UI + flutter_rust_bridge)
+  - specs/               SOURCE-OF-TRUTH capability specs (pre-OpenSpec).
+    When proposing a change for a capability, read specs/<capability>.md
+    first and derive the delta from it.
+
+  Development is STRICTLY test-driven: failing test first, then
+  implementation. Gate = cargo test + clippy -D warnings + fmt clean.
+
+rules:
+  proposal:
+    - Keep proposals under 300 words; always include a Non-goals section.
+    - Reference the source spec file (specs/<capability>.md) the change derives from.
+  specs:
+    - Use "### Requirement:" + "#### Scenario:" blocks; every Requirement has
+      at least one Scenario; use RFC 2119 keywords (SHALL/SHOULD/MAY).
+    - Prefer deterministic, testable scenarios — each maps to at least one test.
+  design:
+    - Keep it under 150 lines; focus on decisions and trade-offs, not restating the spec.
+    - List chosen crates and why they are pure Rust / well-maintained.
+  tasks:
+    - Every implementation task starts with "Test:" describing the failing
+      test to write first.
+    - Tasks are chunks of at most 2 hours; one capability concern per task.
+
+operations:
+  apply:
+    guidance:
+      - "Follow TDD strictly: red (failing test) -> green (minimal impl) -> refactor."
+      - Before marking a task [x], run cargo test, then cargo clippy --workspace
+        --all-targets -- -D warnings, then cargo fmt --all. All three must pass.
+      - Keep commits conventional (feat:/fix:/spec:/chore:) if committing is authorized.
+  archive:
+    guidance:
+      - Run openspec validate --strict before archiving; summarize what the
+        archive merged into openspec/specs/.

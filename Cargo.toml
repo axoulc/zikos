@@ -1,0 +1,62 @@
+[workspace]
+resolver = "3"
+# The Flutter app (apps/zikos-app) is a Dart project, not a Cargo member;
+# it reaches the Rust crates through flutter_rust_bridge.
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://example.invalid/zikos"
+
+[workspace.dependencies]
+# Internal crates
+zikos-core = { path = "crates/zikos-core" }
+zikos-crypto = { path = "crates/zikos-crypto" }
+zikos-audio = { path = "crates/zikos-audio" }
+zikos-server = { path = "crates/zikos-server" }
+zikos-matrix = { path = "crates/zikos-matrix" }
+
+# Matrix client (official Rust SDK; pure-Rust E2EE via vodozemac, pure-Rust
+# store encryption; bundled SQLite is the one C dependency, hermetic for
+# Android/iOS cross-builds)
+matrix-sdk = { version = "0.13", default-features = false, features = [
+  "e2e-encryption",
+  "automatic-room-key-forwarding",
+  "sqlite",
+  "bundled-sqlite",
+  "rustls-tls",
+] }
+matrix-sdk-store-encryption = "0.13"
+
+# Shared
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+rand = "0.9"
+base64 = "0.22"
+
+# Crypto (pure Rust, RustCrypto)
+aes-gcm = "0.10"
+
+# Audio (pure Rust)
+hound = "3.5"
+
+# Server
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+async-trait = "0.1"
+
+# Testing
+tempfile = "3"
+wiremock = "0.6"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"

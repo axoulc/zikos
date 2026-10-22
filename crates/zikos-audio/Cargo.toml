@@ -1,0 +1,12 @@
+[package]
+name = "zikos-audio"
+description = "Zikos audio engine: WAV capture/encode I/O, format policy for takes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+hound = { workspace = true }
+thiserror = { workspace = true }
+zikos-core = { workspace = true }

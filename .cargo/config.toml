@@ -1,0 +1,7 @@
+[alias]
+ck = "check --workspace --all-targets"
+t = "test"
+lint = "clippy --workspace --all-targets -- -D warnings"
+fmtcheck = "fmt --all -- --check"
+# The Flutter UI (apps/zikos-app) has its own toolchain: flutter analyze /
+# flutter test, run from that directory.

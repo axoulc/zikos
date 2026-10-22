@@ -1,0 +1,15 @@
+/target
+Cargo.lock.bak
+*.sqlite
+*.sqlite-*
+.env
+.env.*
+.DS_Store
+node_modules/
+
+# Flutter / Dart
+**/.dart_tool/
+**/.flutter-plugins*
+**/build/
+*.iml
+.idea/
