@@ -10,6 +10,21 @@ Every commit adds its entry under `## [Unreleased]` — see `AGENTS.md`.
 ## [Unreleased]
 
 ### Added
+- `platform-app` capability spec in `openspec/specs/` (new, merged from
+  the archived `build-main-ui` change): main navigation with Record one
+  tap away (bottom bar on phones, rail on desktop), the conversations
+  screen (live list, encryption glyphs, signed-out state), the tree
+  browser (sorted listing with duration/format chips and pending
+  markers, breadcrumbs, three-tap reachability), the record screen
+  (300 ms start, pause-aware timer, interrupted-session prompt, capture
+  surviving navigation), settings (validated homeserver/blob URL/format),
+  and the Dart-renders-only binding contract over flutter_rust_bridge.
+- `audio-recording` capability spec updated with the pause/resume and
+  finalize-format-selection requirements merged from the archived
+  `build-main-ui` change: paused spans are excluded from a take's
+  duration, and finalizing can keep the raw WAV unchanged (FLAC stays
+  the default).
+### Added
 - Main app UI (`platform-app` capability): adaptive navigation with three
   always-visible destinations — Conversations, Files, Record — as a bottom
   bar on phones and a rail on desktop, with Settings one gear-tap away.
