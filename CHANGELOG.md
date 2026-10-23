@@ -10,6 +10,38 @@ Every commit adds its entry under `## [Unreleased]` — see `AGENTS.md`.
 ## [Unreleased]
 
 ### Added
+- Main app UI (`platform-app` capability): adaptive navigation with three
+  always-visible destinations — Conversations, Files, Record — as a bottom
+  bar on phones and a rail on desktop, with Settings one gear-tap away.
+- Conversations screen: the account's rooms with name, last-activity
+  snippet, time, and a shape-differentiated encryption glyph; the list
+  updates live, shows a signed-out state until a login flow exists, and
+  tapping a conversation selects it (bold name + accent edge) as the one
+  Files and Record operate on.
+- Files screen: the current conversation's recording tree with folders
+  first and names sorted, duration and format chips per recording, amber
+  pending markers on unsynced changes, breadcrumb navigation, a
+  pick-a-conversation prompt, and a details sheet on the third tap from
+  the main screen.
+- Record screen: one-tap start with a pause-aware timer, pause/resume and
+  stop controls, and the finalize-or-discard prompt when a previous
+  session was interrupted; recording keeps running while you switch tabs,
+  with an active indicator on the Record destination.
+- Settings screen: homeserver, blob server URL, and default recording
+  format (FLAC by default, WAV keeps the raw capture), validated and
+  persisted by the Rust core — invalid URLs are rejected with a visible
+  error and never saved.
+- Pause/resume in the dictaphone engine: pausing stops writing samples
+  (audio arriving while paused is dropped), the elapsed timer freezes,
+  and the finalized take's duration counts only recorded audio.
+- Finalize-format selection in the dictaphone engine: takes finalize to
+  FLAC (unchanged default) or keep the raw WAV unchanged when configured.
+- The whole UI is bound to the Rust core through a new flutter_rust_bridge
+  crate (`zikos-bridge`, with the generated Dart bindings compiled into
+  the app via cargokit): Dart renders and routes only, every screen is
+  widget-tested against an in-memory fake of the bridge.
+
+### Added
 - `file-tree` capability spec in `openspec/specs/` updated with the
   file-exchange requirements merged from the archived
   `implement-file-exchange` change: blob-referencing file nodes (id +

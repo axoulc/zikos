@@ -1,0 +1,8 @@
+# flutter_rust_bridge codegen configuration.
+# The api surface scanned for codegen is `crate::api` (commands and view
+# types) inside rust/; generated Dart lands in lib/src/rust; the C header
+# (iOS/macOS builds) in ios/Runner.
+rust_root: rust/
+rust_input: crate::api
+dart_output: lib/src/rust
+c_output: ios/Runner/bridge_generated.h

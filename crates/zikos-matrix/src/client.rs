@@ -459,4 +459,71 @@ impl Client {
             matrix_sdk::EncryptionState::Unknown => Ok(RoomEncryption::Unknown),
         }
     }
+
+    /// The account's conversations for the app's room list: every joined
+    /// room with its display name, encryption state, and latest activity.
+    /// Names and encryption come from synced state; the latest activity
+    /// comes from the local message log — the listing works offline.
+    pub async fn conversations(&self) -> Result<Vec<Conversation>, MatrixError> {
+        let mut out = Vec::new();
+        for room in self.inner.rooms() {
+            if !matches!(room.state(), matrix_sdk::RoomState::Joined) {
+                continue;
+            }
+            let encryption = match room.latest_encryption_state().await? {
+                matrix_sdk::EncryptionState::Encrypted => RoomEncryption::Encrypted,
+                matrix_sdk::EncryptionState::NotEncrypted => RoomEncryption::Unencrypted,
+                matrix_sdk::EncryptionState::Unknown => RoomEncryption::Unknown,
+            };
+            let display_name = room
+                .display_name()
+                .await
+                .map_err(|e| MatrixError::Store(format!("room display name failed: {e}")))?
+                .to_string();
+            let last_activity = self
+                .room_messages(room.room_id().as_str())
+                .last()
+                .map(|message| LastActivity {
+                    sender: message.sender.clone(),
+                    preview: match &message.body {
+                        crate::message::MessageBody::Text(text) => text.clone(),
+                        crate::message::MessageBody::Undecryptable => {
+                            "encrypted message (undecryptable)".to_owned()
+                        }
+                    },
+                    timestamp_ms: message.timestamp,
+                });
+            out.push(Conversation {
+                room_id: room.room_id().to_string(),
+                display_name,
+                encryption,
+                last_activity,
+            });
+        }
+        Ok(out)
+    }
+}
+
+/// One conversation as shown in the app's room list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Conversation {
+    /// Room ID, e.g. `!jazz:example.org`.
+    pub room_id: String,
+    /// Computed display name from synced room state.
+    pub display_name: String,
+    /// Whether the room is end-to-end encrypted.
+    pub encryption: RoomEncryption,
+    /// The newest message in the local log, if any.
+    pub last_activity: Option<LastActivity>,
+}
+
+/// The newest message of a conversation, for list previews.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LastActivity {
+    /// Full Matrix ID of the sender.
+    pub sender: String,
+    /// Text preview (or an undecryptable marker).
+    pub preview: String,
+    /// Origin server timestamp, milliseconds since the Unix epoch.
+    pub timestamp_ms: u64,
 }

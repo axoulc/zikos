@@ -42,6 +42,13 @@ pub enum AudioError {
     /// A recorder configuration or input negotiation was invalid.
     #[error("invalid recorder config: {0}")]
     InvalidConfig(String),
+    /// The session is not in a state that allows this operation (e.g.
+    /// pausing an already-paused capture).
+    #[error("invalid session state: {0}")]
+    InvalidState(String),
+    /// The requested output format is not implemented.
+    #[error("unsupported format: {0}")]
+    Unsupported(String),
     /// Filesystem I/O failed.
     #[error("audio i/o failed: {0}")]
     Io(#[from] std::io::Error),

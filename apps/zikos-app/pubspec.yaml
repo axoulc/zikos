@@ -31,6 +31,21 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # Rust core binding (generated into lib/src/rust by
+  # flutter_rust_bridge_codegen; see flutter_rust_bridge.yaml).
+  flutter_rust_bridge: ^2.13.0
+
+  # Compiles the Rust bridge crate into the app's native build
+  # (cargokit wrapper over rust/).
+  rust_lib_zikos_app:
+    path: rust_builder
+
+  # App-support directory handed to the Rust state on boot.
+  path_provider: ^2.1.5
+
+  # Minimal state plumbing between the bridge and the screens.
+  provider: ^6.1.5
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8

@@ -1,8 +1,10 @@
 [workspace]
 resolver = "3"
-# The Flutter app (apps/zikos-app) is a Dart project, not a Cargo member;
-# it reaches the Rust crates through flutter_rust_bridge.
-members = ["crates/*"]
+# The Flutter app (apps/zikos-app) is a Dart project; its Rust binding
+# crate (apps/zikos-app/rust, `zikos-bridge`) IS a member so the cargo
+# gates cover it. The Dart side reaches the crates through
+# flutter_rust_bridge.
+members = ["crates/*", "apps/zikos-app/rust"]
 
 [workspace.package]
 version = "0.1.0"
@@ -18,6 +20,7 @@ zikos-crypto = { path = "crates/zikos-crypto" }
 zikos-audio = { path = "crates/zikos-audio" }
 zikos-server = { path = "crates/zikos-server" }
 zikos-matrix = { path = "crates/zikos-matrix" }
+zikos-bridge = { path = "apps/zikos-app/rust" }
 
 # Matrix client (official Rust SDK; pure-Rust E2EE via vodozemac, pure-Rust
 # store encryption; bundled SQLite is the one C dependency, hermetic for
@@ -51,6 +54,8 @@ flacenc = "0.5"
 claxon = "0.4"
 # Local-timezone take naming (pure Rust)
 jiff = "0.2"
+# URL parsing/validation (pure Rust, ubiquitous)
+url = "2"
 
 # Server
 axum = "0.8"

@@ -16,10 +16,13 @@ pub struct SourceFormat {
 
 /// A pull-based producer of interleaved 16-bit PCM chunks.
 ///
+/// `Send` is part of the contract: capture sessions outlive the call that
+/// started them (the embedder pumps them from a worker thread).
+///
 /// `next_chunk` returns `None` once the source is exhausted (finite
 /// fixture) or stopped (live adapter). Chunks are interleaved frames;
 /// their length is always a multiple of the channel count.
-pub trait SampleSource {
+pub trait SampleSource: Send {
     /// The format this source actually delivers.
     fn format(&self) -> SourceFormat;
 

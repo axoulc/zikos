@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# FRB / ephemeral iOS artifacts (regenerated on every build)
+ios/Flutter/ephemeral/

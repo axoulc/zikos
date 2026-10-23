@@ -72,6 +72,7 @@ pub struct RecorderSession {
     manifest: SessionManifest,
     writer: StreamingWavWriter,
     source: Box<dyn SampleSource>,
+    paused: bool,
 }
 
 impl std::fmt::Debug for RecorderSession {
@@ -116,18 +117,48 @@ impl RecorderSession {
             manifest,
             writer,
             source,
+            paused: false,
         })
     }
 
+    /// Pause capture: while paused, [`pull`](Self::pull) drains the source
+    /// but appends nothing, so paused spans are excluded from the take's
+    /// audio and duration. Pausing an already-paused session is an error.
+    pub fn pause(&mut self) -> Result<(), AudioError> {
+        if self.paused {
+            return Err(AudioError::InvalidState("already paused".into()));
+        }
+        self.paused = true;
+        Ok(())
+    }
+
+    /// Resume a paused session; the same take keeps filling. Resuming a
+    /// session that is not paused is an error.
+    pub fn resume(&mut self) -> Result<(), AudioError> {
+        if !self.paused {
+            return Err(AudioError::InvalidState("not paused".into()));
+        }
+        self.paused = false;
+        Ok(())
+    }
+
+    /// Whether the session is currently paused.
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
     /// Drain everything the source currently offers into the staged WAV
-    /// (flushed to disk). Returns the number of frames pulled. The
-    /// session stays `in-progress`.
+    /// (flushed to disk). Returns the number of frames appended. While
+    /// paused, chunks are drained and discarded — nothing is written.
+    /// The session stays `in-progress`.
     pub fn pull(&mut self) -> Result<u64, AudioError> {
         let channels = usize::from(self.manifest.channels);
         let mut frames = 0u64;
         while let Some(chunk) = self.source.next_chunk() {
-            frames += (chunk.len() / channels) as u64;
-            self.writer.append(&chunk)?;
+            if !self.paused {
+                frames += (chunk.len() / channels) as u64;
+                self.writer.append(&chunk)?;
+            }
         }
         self.writer.flush()?;
         Ok(frames)
@@ -192,12 +223,23 @@ impl StagedSession {
         Ok(())
     }
 
-    /// Transcode the staged WAV to `take.flac`, write `meta.json` with the
-    /// default title derived from the persisted start time in `tz`
-    /// (pass `jiff::tz::TimeZone::system()` for local-time naming), then
-    /// delete the staging WAV. The staging file is only removed after the
-    /// FLAC is fully written.
+    /// Finalize to FLAC (the default). See [`finalize_as`](Self::finalize_as).
     pub fn finalize(self, tz: &jiff::tz::TimeZone) -> Result<FinalizedTake, AudioError> {
+        self.finalize_as(tz, zikos_core::AudioFormat::Flac)
+    }
+
+    /// Finalize the staged session in the requested container: FLAC
+    /// transcodes the staged WAV to `take.flac` and removes the staging
+    /// file; WAV keeps the raw staged WAV as the take unchanged
+    /// (passthrough). Both write `meta.json` with the default title
+    /// derived from the persisted start time in `tz` (pass
+    /// `jiff::tz::TimeZone::system()` for local-time naming) and record
+    /// the chosen format.
+    pub fn finalize_as(
+        self,
+        tz: &jiff::tz::TimeZone,
+        format: zikos_core::AudioFormat,
+    ) -> Result<FinalizedTake, AudioError> {
         let Self { dir, manifest } = self;
         let wav_path = dir.join(TAKE_WAV);
         let flac_path = dir.join(TAKE_FLAC);
@@ -206,7 +248,7 @@ impl StagedSession {
         let info = crate::wav_info(&fs::read(&wav_path)?)?;
         let meta = zikos_core::RecordingMeta {
             title: crate::default_title(manifest.started_at, tz)?,
-            format: zikos_core::AudioFormat::Flac,
+            format,
             started_at: manifest.started_at,
             duration_secs: info.frames as f64 / info.sample_rate_hz as f64,
             sample_rate_hz: manifest.sample_rate_hz,
@@ -217,9 +259,21 @@ impl StagedSession {
         meta.validate()
             .map_err(|e| AudioError::Meta(e.to_string()))?;
 
-        crate::flac::transcode_wav_to_flac(&wav_path, &flac_path)?;
+        let audio_path = match format {
+            zikos_core::AudioFormat::Flac => {
+                crate::flac::transcode_wav_to_flac(&wav_path, &flac_path)?;
+                fs::remove_file(&wav_path)?;
+                flac_path
+            }
+            // Passthrough: the staged WAV is already a valid, patched file.
+            zikos_core::AudioFormat::Wav => wav_path,
+            zikos_core::AudioFormat::Opus => {
+                return Err(AudioError::Unsupported(
+                    "opus finalization is not implemented".into(),
+                ));
+            }
+        };
         fs::write(&meta_path, serde_json::to_vec_pretty(&meta)?)?;
-        fs::remove_file(&wav_path)?;
 
         let mut manifest = manifest;
         manifest.state = SessionState::Finalized;
@@ -227,7 +281,7 @@ impl StagedSession {
 
         Ok(FinalizedTake {
             dir,
-            flac_path,
+            audio_path,
             meta_path,
             meta,
         })
@@ -244,20 +298,26 @@ impl StagedSession {
     }
 }
 
-/// The outcome of a successful finalize: FLAC + metadata on disk, WAV
-/// staging removed.
+/// The outcome of a successful finalize: audio + metadata on disk (FLAC
+/// transcoded, or the raw WAV when passthrough was requested).
 #[derive(Debug)]
 pub struct FinalizedTake {
     dir: PathBuf,
-    flac_path: PathBuf,
+    audio_path: PathBuf,
     meta_path: PathBuf,
     meta: zikos_core::RecordingMeta,
 }
 
 impl FinalizedTake {
-    /// The FLAC file written by finalization.
+    /// The take's audio file (`take.flac`, or the raw `take.wav` for WAV
+    /// passthrough).
+    pub fn audio_path(&self) -> &Path {
+        &self.audio_path
+    }
+
+    /// The take's audio file; kept for callers finalized to FLAC.
     pub fn flac_path(&self) -> &Path {
-        &self.flac_path
+        &self.audio_path
     }
 
     /// The `meta.json` file written by finalization.
@@ -279,11 +339,150 @@ impl FinalizedTake {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RecorderConfig, SineSource, WavInfo};
+    use crate::{RecorderConfig, SineSource, SourceFormat, WavInfo};
+    use std::collections::VecDeque;
     use std::path::Path;
 
     fn wav_info_on(path: &Path) -> WavInfo {
         crate::wav_info(&std::fs::read(path).unwrap()).unwrap()
+    }
+
+    /// Queue-driven source: the test keeps a handle after the source is
+    /// boxed into the session, so chunks can be fed while paused — exactly
+    /// how a live input keeps delivering during a live span. Shared via
+    /// `Arc<Mutex>` so the source stays `Send` like a real one.
+    #[derive(Clone, Default)]
+    struct SharedQueue(std::sync::Arc<std::sync::Mutex<VecDeque<Vec<i16>>>>);
+
+    impl SharedQueue {
+        fn push_frames(&self, format: SourceFormat, frames: u64) {
+            let channels = u64::from(format.channels);
+            self.0
+                .lock()
+                .unwrap()
+                .push_back(vec![0i16; (frames * channels) as usize]);
+        }
+    }
+
+    struct ManualSource {
+        format: SourceFormat,
+        queue: SharedQueue,
+    }
+
+    impl ManualSource {
+        fn new(sample_rate_hz: u32, channels: u16) -> (Self, SharedQueue) {
+            let format = SourceFormat {
+                sample_rate_hz,
+                channels,
+            };
+            let queue = SharedQueue::default();
+            (
+                Self {
+                    format,
+                    queue: queue.clone(),
+                },
+                queue,
+            )
+        }
+    }
+
+    impl SampleSource for ManualSource {
+        fn format(&self) -> SourceFormat {
+            self.format
+        }
+
+        fn next_chunk(&mut self) -> Option<Vec<i16>> {
+            self.queue.0.lock().unwrap().pop_front()
+        }
+    }
+
+    #[test]
+    fn paused_pull_drains_source_but_writes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let sessions = root.path().join("sessions");
+        let (source, queue) = ManualSource::new(48_000, 2);
+        let format = source.format();
+        queue.push_frames(format, 24_000);
+        let mut session = RecorderSession::start(
+            &RecorderConfig::default(),
+            Box::new(source),
+            &sessions,
+            1_776_000_000,
+        )
+        .unwrap();
+
+        let wav = session.dir().join(TAKE_WAV);
+        session.pull().unwrap();
+        let size_before_pause = std::fs::metadata(&wav).unwrap().len();
+
+        // Paused: audio keeps arriving, is drained, and nothing is
+        // appended; pull() reports zero frames written.
+        session.pause().unwrap();
+        assert!(session.is_paused());
+        queue.push_frames(format, 48_000);
+        assert_eq!(session.pull().unwrap(), 0);
+        assert_eq!(
+            std::fs::metadata(&wav).unwrap().len(),
+            size_before_pause,
+            "no bytes may be appended while paused"
+        );
+
+        // Pausing twice / resuming while live are invalid-state errors.
+        assert!(session.pause().is_err());
+        session.resume().unwrap();
+        assert!(!session.is_paused());
+        assert!(session.resume().is_err());
+
+        // After resume the same stream keeps writing into the same take.
+        queue.push_frames(format, 24_000);
+        assert_eq!(session.pull().unwrap(), 24_000);
+        let staged = session.stop().unwrap();
+        let info = wav_info_on(&staged.dir().join(TAKE_WAV));
+        assert_eq!(info.frames, 48_000);
+    }
+
+    #[test]
+    fn finalize_duration_excludes_paused_span() {
+        // Spec scenario: record 2 s, pause 5 s, resume, record 3 s →
+        // a 5-second take.
+        let root = tempfile::tempdir().unwrap();
+        let sessions = root.path().join("sessions");
+        let (source, queue) = ManualSource::new(48_000, 2);
+        let format = source.format();
+        queue.push_frames(format, 96_000); // 2 s
+        let mut session = RecorderSession::start(
+            &RecorderConfig::default(),
+            Box::new(source),
+            &sessions,
+            1_792_656_900,
+        )
+        .unwrap();
+        assert_eq!(session.pull().unwrap(), 96_000);
+
+        session.pause().unwrap();
+        for _ in 0..5 {
+            queue.push_frames(format, 48_000); // 5 s arriving while paused
+        }
+        assert_eq!(session.pull().unwrap(), 0);
+
+        session.resume().unwrap();
+        for _ in 0..3 {
+            queue.push_frames(format, 48_000); // 3 s more
+        }
+        assert_eq!(session.pull().unwrap(), 144_000);
+
+        let take = session
+            .stop()
+            .unwrap()
+            .finalize(&jiff::tz::TimeZone::UTC)
+            .unwrap();
+        assert!(
+            (take.meta().duration_secs - 5.0).abs() < 1e-3,
+            "duration {}",
+            take.meta().duration_secs
+        );
+        let reader = claxon::FlacReader::open(take.flac_path()).unwrap();
+        assert_eq!(reader.streaminfo().samples, Some(240_000));
     }
 
     #[test]
@@ -443,5 +642,91 @@ mod tests {
             (duration - 60.0).abs() <= 0.5,
             "decoded duration {duration}"
         );
+    }
+
+    #[test]
+    fn finalize_as_wav_keeps_raw_wav_and_records_format() {
+        use jiff::tz::TimeZone;
+        use zikos_core::AudioFormat;
+
+        let root = tempfile::tempdir().unwrap();
+        let sessions = root.path().join("sessions");
+        let staged = RecorderSession::start(
+            &RecorderConfig::default(),
+            Box::new(SineSource::new(48_000, 2, 24_000)),
+            &sessions,
+            1_792_656_900,
+        )
+        .unwrap()
+        .stop()
+        .unwrap();
+        let dir = staged.dir().to_path_buf();
+        let wav_bytes_before = fs::read(dir.join(TAKE_WAV)).unwrap();
+
+        let take = staged
+            .finalize_as(&TimeZone::UTC, AudioFormat::Wav)
+            .unwrap();
+
+        // Passthrough: the staged WAV *is* the take, byte-for-byte.
+        assert_eq!(take.meta().format, AudioFormat::Wav);
+        assert_eq!(take.audio_path(), dir.join(TAKE_WAV));
+        assert_eq!(fs::read(take.audio_path()).unwrap(), wav_bytes_before);
+        assert!((take.meta().duration_secs - 0.5).abs() < 1e-3);
+        assert!(!dir.join(TAKE_FLAC).exists());
+        assert_eq!(
+            SessionManifest::load(&dir).unwrap().state,
+            SessionState::Finalized
+        );
+    }
+
+    #[test]
+    fn finalize_as_rejects_unsupported_formats() {
+        use jiff::tz::TimeZone;
+        use zikos_core::AudioFormat;
+
+        let root = tempfile::tempdir().unwrap();
+        let sessions = root.path().join("sessions");
+        let staged = RecorderSession::start(
+            &RecorderConfig::default(),
+            Box::new(SineSource::new(48_000, 2, 24_000)),
+            &sessions,
+            1_792_656_900,
+        )
+        .unwrap()
+        .stop()
+        .unwrap();
+
+        assert!(
+            staged
+                .finalize_as(&TimeZone::UTC, AudioFormat::Opus)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn finalize_as_flac_matches_default_finalize() {
+        use jiff::tz::TimeZone;
+        use zikos_core::AudioFormat;
+
+        let root = tempfile::tempdir().unwrap();
+        let sessions = root.path().join("sessions");
+        let staged = RecorderSession::start(
+            &RecorderConfig::default(),
+            Box::new(SineSource::new(48_000, 2, 24_000)),
+            &sessions,
+            1_792_656_900,
+        )
+        .unwrap()
+        .stop()
+        .unwrap();
+        let dir = staged.dir().to_path_buf();
+
+        let take = staged
+            .finalize_as(&TimeZone::UTC, AudioFormat::Flac)
+            .unwrap();
+        assert_eq!(take.meta().format, AudioFormat::Flac);
+        assert_eq!(take.audio_path(), dir.join(TAKE_FLAC));
+        assert!(take.audio_path().is_file());
+        assert!(!dir.join(TAKE_WAV).exists());
     }
 }

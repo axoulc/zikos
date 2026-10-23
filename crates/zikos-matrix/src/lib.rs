@@ -21,7 +21,7 @@ mod message_log;
 mod session_store;
 mod tree;
 
-pub use client::{Client, RoomEncryption};
+pub use client::{Client, Conversation, LastActivity, RoomEncryption};
 pub use delivery::{DeliveryEvent, DeliveryState};
 pub use error::MatrixError;
 pub use message::{MessageBody, MessageEvent};
