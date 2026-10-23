@@ -73,6 +73,7 @@ fn ensure_conflicts_folder(tree: &mut FileTree) -> Result<bool, TreeError> {
         parent: tree.root,
         kind: NodeKind::Folder,
         name: "Conflicts".into(),
+        file: None,
     })?;
     Ok(true)
 }
@@ -81,7 +82,14 @@ fn ensure_conflicts_folder(tree: &mut FileTree) -> Result<bool, TreeError> {
 /// rather than dropping it (spec: a conflict shall never lose data
 /// silently).
 fn orphan_create(tree: &mut FileTree, conflicts: &mut Vec<ConflictRecord>, event: &TreeOpEvent) {
-    let TreeOp::Create { id, kind, name, .. } = &event.op else {
+    let TreeOp::Create {
+        id,
+        kind,
+        name,
+        file,
+        ..
+    } = &event.op
+    else {
         return; // caller only routes creates here
     };
     if ensure_conflicts_folder(tree).is_err() {
@@ -94,6 +102,7 @@ fn orphan_create(tree: &mut FileTree, conflicts: &mut Vec<ConflictRecord>, event
             parent: CONFLICTS_ID,
             kind: *kind,
             name: name.clone(),
+            file: file.clone(),
         })
         .is_ok()
     {
@@ -279,9 +288,9 @@ impl Engine {
 
         let mut copy_of: BTreeMap<NodeId, NodeId> = BTreeMap::new();
         for original in doomed {
-            let (kind, name, parent) = {
+            let (kind, name, parent, file) = {
                 let n = &self.tree.nodes[&original];
-                (n.kind, n.name.clone(), n.parent)
+                (n.kind, n.name.clone(), n.parent, n.file.clone())
             };
             let copy_parent = if original == node {
                 CONFLICTS_ID
@@ -306,6 +315,7 @@ impl Engine {
                     parent: copy_parent,
                     kind,
                     name,
+                    file,
                 })
                 .is_ok()
             {
@@ -575,6 +585,7 @@ mod tests {
                 parent: ROOT_ID,
                 kind: NodeKind::Folder,
                 name: "Takes".into(),
+                file: None,
             }
         );
     }
@@ -638,6 +649,7 @@ mod tests {
                     parent,
                     kind: NodeKind::Folder,
                     name: format!("folder-{i}"),
+                    file: None,
                 }
             } else {
                 let id = uuid::Uuid::new_v4();
@@ -647,6 +659,7 @@ mod tests {
                     parent,
                     kind: NodeKind::File,
                     name: format!("file-{i}.flac"),
+                    file: None,
                 }
             };
             tree.apply(&op).unwrap();
@@ -685,6 +698,7 @@ mod tests {
                 parent: ghost_parent,
                 kind: NodeKind::File,
                 name: "take-9.flac".into(),
+                file: None,
             },
             author: "@alice:example.org".into(),
             origin_server_ts: 1_000,
@@ -776,6 +790,7 @@ mod tests {
                     parent: ROOT_ID,
                     kind: NodeKind::Folder,
                     name: "Takes".into(),
+                    file: None,
                 },
                 None,
                 None,
@@ -787,6 +802,7 @@ mod tests {
                     parent: takes,
                     kind: NodeKind::File,
                     name: "take-1.flac".into(),
+                    file: None,
                 },
                 None,
                 None,
@@ -934,6 +950,7 @@ mod tests {
                 parent: ROOT_ID,
                 kind: NodeKind::Folder,
                 name: "Scraps".into(),
+                file: None,
             },
             None,
             None,
@@ -945,6 +962,7 @@ mod tests {
                 parent: x,
                 kind: NodeKind::File,
                 name: "child.flac".into(),
+                file: None,
             },
             None,
             None,
@@ -956,6 +974,7 @@ mod tests {
                 parent: ROOT_ID,
                 kind: NodeKind::Folder,
                 name: "Archive".into(),
+                file: None,
             },
             None,
             None,
@@ -1033,6 +1052,7 @@ mod tests {
                 parent: ROOT_ID,
                 kind: NodeKind::Folder,
                 name: "Band".into(),
+                file: None,
             },
             None,
             None,
@@ -1044,6 +1064,7 @@ mod tests {
                 parent: f,
                 kind: NodeKind::File,
                 name: "known.flac".into(),
+                file: None,
             },
             None,
             None,
@@ -1055,6 +1076,7 @@ mod tests {
                 parent: f,
                 kind: NodeKind::File,
                 name: "concurrent.flac".into(),
+                file: None,
             },
             None,
             None,
@@ -1083,6 +1105,114 @@ mod tests {
                 node: bs,
                 copy: bs_copy,
             }]
+        );
+    }
+
+    #[test]
+    fn conflict_copies_retain_file_payloads() {
+        // A published file races two renames; the losing rename's preserved
+        // copy under Conflicts/ must keep the blob reference so it stays
+        // downloadable (spec: conflict copies keep blob references).
+        let takes = Uuid::new_v4();
+        let file = Uuid::new_v4();
+        let payload = crate::tree::file_payload();
+        let mut b = EventBuilder::new();
+        let events = vec![
+            b.build(
+                "@alice:example.org",
+                TreeOp::Create {
+                    id: takes,
+                    parent: ROOT_ID,
+                    kind: NodeKind::Folder,
+                    name: "Takes".into(),
+                    file: None,
+                },
+                None,
+                None,
+            ),
+            b.build(
+                "@alice:example.org",
+                TreeOp::Create {
+                    id: file,
+                    parent: takes,
+                    kind: NodeKind::File,
+                    name: "take-1.flac".into(),
+                    file: Some(payload.clone()),
+                },
+                None,
+                None,
+            ),
+        ];
+        let mut events = events;
+        let base = NodeBase {
+            name: "take-1.flac".into(),
+            parent: takes,
+        };
+        // Bob renames first, Carol later: Carol wins, Bob's name survives
+        // under Conflicts/.
+        events.push(b.build(
+            "@bob:example.org",
+            TreeOp::Rename {
+                id: file,
+                name: "vox.flac".into(),
+            },
+            Some(base.clone()),
+            None,
+        ));
+        events.push(b.build(
+            "@carol:example.org",
+            TreeOp::Rename {
+                id: file,
+                name: "drum.flac".into(),
+            },
+            Some(base),
+            None,
+        ));
+
+        let out = replay(&events);
+        let copy = out
+            .tree
+            .find_by_path("Conflicts/vox.flac")
+            .unwrap()
+            .expect("loser copy is preserved");
+        assert_eq!(
+            out.tree.nodes[&copy].file.as_ref(),
+            Some(&payload),
+            "the conflict copy keeps the blob reference"
+        );
+        assert_eq!(
+            out.tree.nodes[&file].file.as_ref(),
+            Some(&payload),
+            "the winner keeps it too"
+        );
+
+        // An orphaned create (ghost parent) preserves its payload as well.
+        let ghost_parent = Uuid::new_v4();
+        let orphan = Uuid::new_v4();
+        let orphan_event = TreeOpEvent {
+            op: TreeOp::Create {
+                id: orphan,
+                parent: ghost_parent,
+                kind: NodeKind::File,
+                name: "take-9.flac".into(),
+                file: Some(payload.clone()),
+            },
+            author: "@alice:example.org".into(),
+            origin_server_ts: 1_000,
+            event_id: "$orphan".into(),
+            base: None,
+            known_children: None,
+        };
+        let out = replay(&[orphan_event]);
+        let copy = out
+            .tree
+            .find_by_path("Conflicts/take-9.flac")
+            .unwrap()
+            .expect("orphan copy is preserved");
+        assert_eq!(
+            out.tree.nodes[&copy].file.as_ref(),
+            Some(&payload),
+            "the orphan copy keeps the blob reference"
         );
     }
 
@@ -1153,6 +1283,7 @@ mod tests {
                     parent: ROOT_ID,
                     kind: NodeKind::Folder,
                     name: "Takes".into(),
+                    file: None,
                 },
             ),
             mk(
@@ -1162,6 +1293,7 @@ mod tests {
                     parent: folder,
                     kind: NodeKind::File,
                     name: "take-1.flac".into(),
+                    file: None,
                 },
             ),
         ]);
@@ -1346,6 +1478,7 @@ mod prop_tests {
                                 parent,
                                 kind,
                                 name: format!("gen-{}", self.seq),
+                                file: None,
                             },
                             None,
                             None,
@@ -1488,6 +1621,7 @@ mod prop_tests {
                         parent: ROOT_ID,
                         kind: NodeKind::Folder,
                         name: "Takes".into(),
+                        file: None,
                     },
                     author: "@a:hs".into(),
                     origin_server_ts: 1,
@@ -1501,6 +1635,7 @@ mod prop_tests {
                         parent: takes,
                         kind: NodeKind::File,
                         name: "take-1.flac".into(),
+                        file: None,
                     },
                     author: "@a:hs".into(),
                     origin_server_ts: 2,

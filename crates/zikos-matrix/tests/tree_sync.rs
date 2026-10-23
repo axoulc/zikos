@@ -68,6 +68,7 @@ async fn tree_op_sends_as_custom_event_with_delivery_states() {
             parent: zikos_core::tree::ROOT_ID,
             kind: NodeKind::Folder,
             name: "Takes".into(),
+            file: None,
         },
         base: None,
         known_children: None,
@@ -170,6 +171,7 @@ async fn sync_delivers_tree_ops_with_room_envelope() {
             parent: zikos_core::tree::ROOT_ID,
             kind: NodeKind::Folder,
             name: "Takes".into(),
+            file: None,
         }
     );
 }
@@ -321,6 +323,7 @@ async fn offline_tree_op_appears_pending_until_room_echo() {
             parent: zikos_core::tree::ROOT_ID,
             kind: NodeKind::Folder,
             name: "Takes".into(),
+            file: None,
         },
         base: None,
         known_children: None,

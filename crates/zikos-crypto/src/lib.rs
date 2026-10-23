@@ -44,12 +44,62 @@ impl FileKey {
     }
 }
 
+/// The key travels on the wire (inside the encrypted room event) in its
+/// base64 string form — exactly [`FileKey::to_base64`].
+impl Serialize for FileKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_base64())
+    }
+}
+
+impl<'de> Deserialize<'de> for FileKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = <String as Deserialize>::deserialize(deserializer)?;
+        FileKey::from_base64(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Nonce length in the wire frame (the AES-GCM standard 96 bits).
+const NONCE_LEN: usize = 12;
+
 /// What gets uploaded: nonce prepended is NOT done implicitly; both fields are
 /// explicit so the wire format is unambiguous.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct EncryptedBlob {
     pub nonce: [u8; 12],
     pub ciphertext: Vec<u8>,
+}
+
+impl EncryptedBlob {
+    /// The stable cross-device frame: `nonce ‖ ciphertext`. The blob server
+    /// stores bodies verbatim, so this exact byte layout is the client
+    /// contract for anything uploaded or downloaded.
+    pub fn to_wire(&self) -> Vec<u8> {
+        let mut wire = Vec::with_capacity(NONCE_LEN + self.ciphertext.len());
+        wire.extend_from_slice(&self.nonce);
+        wire.extend_from_slice(&self.ciphertext);
+        wire
+    }
+
+    /// Parse a `nonce ‖ ciphertext` frame. Frames without room for a nonce
+    /// and at least one ciphertext byte fail closed.
+    pub fn from_wire(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() <= NONCE_LEN {
+            return Err(CryptoError::MalformedBlob);
+        }
+        let (nonce, ciphertext) = bytes.split_at(NONCE_LEN);
+        Ok(Self {
+            // Infallible: split_at(NONCE_LEN) guarantees the slice length.
+            nonce: nonce.try_into().expect("slice length equals NONCE_LEN"),
+            ciphertext: ciphertext.to_vec(),
+        })
+    }
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -58,6 +108,8 @@ pub enum CryptoError {
     DecryptFailed,
     #[error("malformed key material")]
     MalformedKeyMaterial,
+    #[error("malformed blob frame (no room for nonce and ciphertext)")]
+    MalformedBlob,
 }
 
 /// Encrypt a whole file with AES-256-GCM. A fresh random nonce per call.
@@ -134,5 +186,45 @@ mod tests {
         assert_eq!(FileKey::from_base64(&key.to_base64()).unwrap(), key);
         assert!(FileKey::from_base64("not!!valid").is_err());
         assert!(FileKey::from_base64(&B64.encode([0u8; 5])).is_err()); // wrong length
+    }
+
+    #[test]
+    fn file_key_serde_is_the_base64_string_form() {
+        let key = FileKey::generate();
+        let json = serde_json::to_value(&key).unwrap();
+        assert_eq!(json, serde_json::Value::String(key.to_base64()));
+        let back: FileKey = serde_json::from_value(json).unwrap();
+        assert_eq!(back, key);
+        // Malformed base64 or the wrong length fail deserialization.
+        assert!(serde_json::from_value::<FileKey>("not!!valid".into()).is_err());
+        assert!(
+            serde_json::from_value::<FileKey>(serde_json::Value::String(B64.encode([0u8; 5])))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn wire_frame_roundtrips_with_exact_layout() {
+        let key = FileKey::generate();
+        let blob = encrypt_blob(&key, &[7u8; 300]);
+        let wire = blob.to_wire();
+        // Layout contract: nonce ‖ ciphertext, nothing else.
+        assert_eq!(wire.len(), 12 + blob.ciphertext.len());
+        assert_eq!(&wire[..12], &blob.nonce[..]);
+        let back = EncryptedBlob::from_wire(&wire).unwrap();
+        assert_eq!(decrypt_blob(&key, &back).unwrap(), vec![7u8; 300]);
+    }
+
+    #[test]
+    fn short_wire_frames_fail_closed() {
+        assert_eq!(
+            EncryptedBlob::from_wire(&[0u8; 11]),
+            Err(CryptoError::MalformedBlob)
+        );
+        // Nonce-only frames carry no ciphertext at all.
+        assert_eq!(
+            EncryptedBlob::from_wire(&[0u8; 12]),
+            Err(CryptoError::MalformedBlob)
+        );
     }
 }

@@ -10,6 +10,17 @@ Every commit adds its entry under `## [Unreleased]` — see `AGENTS.md`.
 ## [Unreleased]
 
 ### Added
+- End-to-end file exchange (new `zikos-exchange` crate + `file-tree`
+  payload extension): publishing a finished recording encrypts it on the
+  device with a fresh per-file key (AES-256-GCM), uploads only ciphertext
+  to the blob server, and shares it as a tree event carrying the blob id,
+  the key, and the take's metadata inside the encrypted room — so opening
+  the file on another member's device downloads and decrypts it with no
+  key management. File nodes in the shared tree now show which blob they
+  reference, and copies preserved under `Conflicts/` stay downloadable.
+  The blob server still sees nothing but opaque ciphertext: no audio, no
+  file names, no metadata (proven by an end-to-end test that moves a real
+  recorded take between two simulated devices over a live local server).
 - `file-tree` capability spec in `openspec/specs/`, merged from the
   archived `sync-tree-over-matrix` change: event-sourced tree, tree
   operations, tree events over Matrix (custom type, idempotent,

@@ -1,0 +1,25 @@
+[package]
+name = "zikos-exchange"
+description = "Client-side file exchange: encrypt finalized takes, upload to the blob server, fetch + decrypt on any device"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+zikos-core = { workspace = true }
+zikos-crypto = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+zikos-audio = { workspace = true }
+zikos-server = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+jiff = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }

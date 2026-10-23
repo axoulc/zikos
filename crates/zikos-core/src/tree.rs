@@ -24,12 +24,30 @@ pub enum NodeKind {
     File,
 }
 
+/// A file node's reference to its stored blob: the server-minted id, the
+/// per-file key, and the take's metadata. The key and metadata travel only
+/// inside the end-to-end encrypted room event — never to the blob server
+/// (`specs/security.md`, key distribution).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FilePayload {
+    /// Blob id under which the ciphertext lives on the blob server.
+    pub blob_id: String,
+    /// Per-file AES-256 key, base64 on the wire.
+    pub key: zikos_crypto::FileKey,
+    /// The take's metadata (mirrors the finalized take's `meta.json`).
+    pub meta: crate::RecordingMeta,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Node {
     pub id: NodeId,
     pub parent: Option<NodeId>,
     pub kind: NodeKind,
     pub name: String,
+    /// Blob reference for file nodes (`None` on folders and on files
+    /// authored before file exchange existed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<FilePayload>,
 }
 
 /// One mutation of the tree. Serialize these into the room event log.
@@ -43,6 +61,10 @@ pub enum TreeOp {
         parent: NodeId,
         kind: NodeKind,
         name: String,
+        /// Blob reference; present iff the created node is an uploaded
+        /// file. Absent on events authored before file exchange existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file: Option<FilePayload>,
     },
     Rename {
         id: NodeId,
@@ -72,6 +94,8 @@ pub enum TreeError {
     RootImmutable,
     #[error("malformed path {0:?}")]
     MalformedPath(String),
+    #[error("file payload is only allowed on file creates")]
+    FilePayloadOnFolder,
 }
 
 /// A materialized file tree. Nodes are stored in a `BTreeMap` keyed by id so
@@ -93,6 +117,7 @@ impl FileTree {
                 parent: None,
                 kind: NodeKind::Folder,
                 name: String::new(),
+                file: None,
             },
         );
         Self {
@@ -109,8 +134,12 @@ impl FileTree {
                 parent,
                 kind,
                 name,
+                file,
             } => {
                 Self::check_name(name)?;
+                if *kind == NodeKind::Folder && file.is_some() {
+                    return Err(TreeError::FilePayloadOnFolder);
+                }
                 if id == &self.root || self.nodes.contains_key(id) {
                     return Err(TreeError::UnknownNode(*id)); // id collisions are rejected
                 }
@@ -128,6 +157,7 @@ impl FileTree {
                         parent: Some(*parent),
                         kind: *kind,
                         name: name.clone(),
+                        file: file.clone(),
                     },
                 );
                 Ok(())
@@ -278,6 +308,25 @@ impl FileTree {
     }
 }
 
+/// A representative [`FilePayload`] for tests (fresh random key).
+#[cfg(test)]
+pub(crate) fn file_payload() -> FilePayload {
+    FilePayload {
+        blob_id: "5f0f7f65-1d2e-4c8b-9a7d-0b1c2d3e4f5a".into(),
+        key: zikos_crypto::FileKey::generate(),
+        meta: crate::RecordingMeta {
+            title: "take-20261022-1015".into(),
+            format: crate::AudioFormat::Flac,
+            started_at: 1_776_000_000,
+            duration_secs: 94.5,
+            sample_rate_hz: 48_000,
+            channels: 2,
+            bpm: None,
+            comment: None,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +338,7 @@ mod tests {
             parent,
             kind: NodeKind::Folder,
             name: name.into(),
+            file: None,
         })
         .unwrap();
         id
@@ -301,6 +351,7 @@ mod tests {
             parent,
             kind: NodeKind::File,
             name: name.into(),
+            file: None,
         })
         .unwrap();
         id
@@ -349,6 +400,7 @@ mod tests {
             parent: tree.root,
             kind: NodeKind::Folder,
             name: "Takes".into(),
+            file: None,
         });
         let f = NodeId::new_v4();
         ops.push(TreeOp::Create {
@@ -356,6 +408,7 @@ mod tests {
             parent: takes,
             kind: NodeKind::File,
             name: "old.flac".into(),
+            file: None,
         });
         ops.push(TreeOp::Rename {
             id: f,
@@ -418,6 +471,7 @@ mod tests {
                 parent: root,
                 kind: NodeKind::Folder,
                 name: "a/b".into(),
+                file: None,
             }),
             Err(TreeError::InvalidName("a/b".into()))
         );
@@ -428,6 +482,7 @@ mod tests {
                 parent: ghost,
                 kind: NodeKind::Folder,
                 name: "ok".into(),
+                file: None,
             }),
             Err(TreeError::UnknownNode(ghost))
         );
@@ -437,6 +492,7 @@ mod tests {
             parent: root,
             kind: NodeKind::File,
             name: "f.flac".into(),
+            file: None,
         })
         .unwrap();
         // A file cannot be a parent.
@@ -446,6 +502,7 @@ mod tests {
                 parent: file_id,
                 kind: NodeKind::File,
                 name: "nested.flac".into(),
+                file: None,
             }),
             Err(TreeError::NotAFolder(_))
         ));
@@ -471,5 +528,66 @@ mod tests {
         let round: FileTree = serde_json::from_str(&json_a).unwrap();
         assert_eq!(tree, round);
         assert_eq!(json_a, serde_json::to_string(&round).unwrap());
+    }
+
+    #[test]
+    fn file_create_carries_its_payload() {
+        let mut tree = FileTree::new();
+        let id = Uuid::new_v4();
+        let payload = file_payload();
+        let op = TreeOp::Create {
+            id,
+            parent: tree.root,
+            kind: NodeKind::File,
+            name: "take-1.flac".into(),
+            file: Some(payload.clone()),
+        };
+        tree.apply(&op).unwrap();
+        assert_eq!(tree.nodes[&id].file.as_ref(), Some(&payload));
+
+        // The op round-trips through JSON with the key in its base64 form.
+        let json = serde_json::to_value(&op).unwrap();
+        assert_eq!(json["file"]["blob_id"], payload.blob_id);
+        assert!(json["file"]["key"].is_string());
+        assert_eq!(serde_json::from_value::<TreeOp>(json).unwrap(), op);
+    }
+
+    #[test]
+    fn legacy_creates_without_payload_replay_unchanged() {
+        // Wire form authored before file payloads existed: no "file" key.
+        let id = Uuid::new_v4();
+        let json = serde_json::json!({
+            "op": "create",
+            "id": id.to_string(),
+            "parent": ROOT_ID.to_string(),
+            "kind": "file",
+            "name": "old.flac",
+        });
+        let op: TreeOp = serde_json::from_value(json).unwrap();
+        assert!(
+            matches!(&op, TreeOp::Create { file: None, .. }),
+            "legacy creates deserialize without a payload"
+        );
+        let mut tree = FileTree::new();
+        tree.apply(&op).unwrap();
+        assert_eq!(tree.nodes.len(), 2);
+        assert!(tree.nodes[&id].file.is_none());
+    }
+
+    #[test]
+    fn folder_create_with_file_payload_is_rejected() {
+        let mut tree = FileTree::new();
+        let before = tree.clone();
+        assert_eq!(
+            tree.apply(&TreeOp::Create {
+                id: Uuid::new_v4(),
+                parent: tree.root,
+                kind: NodeKind::Folder,
+                name: "Takes".into(),
+                file: Some(file_payload()),
+            }),
+            Err(TreeError::FilePayloadOnFolder)
+        );
+        assert_eq!(tree, before, "a rejected create must not touch the tree");
     }
 }
