@@ -10,6 +10,13 @@ Every commit adds its entry under `## [Unreleased]` — see `AGENTS.md`.
 ## [Unreleased]
 
 ### Added
+- `file-tree` capability spec in `openspec/specs/` updated with the
+  file-exchange requirements merged from the archived
+  `implement-file-exchange` change: blob-referencing file nodes (id +
+  per-file key + metadata inside the encrypted event, with legacy-event
+  compatibility), the publish flow (validate → encrypt → upload →
+  file-create event), download-and-decrypt on another device with
+  fail-closed integrity errors, and downloadable `Conflicts/` copies.
 - End-to-end file exchange (new `zikos-exchange` crate + `file-tree`
   payload extension): publishing a finished recording encrypts it on the
   device with a fresh per-file key (AES-256-GCM), uploads only ciphertext
