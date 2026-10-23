@@ -18,6 +18,10 @@ Every commit adds its entry under `## [Unreleased]` — see `AGENTS.md`.
   Matrix OpenID verifier is now integration-tested against a mock
   homeserver speaking the real federation protocol, including the SSRF
   guard (invalid homeserver names never trigger an outbound request).
+- `audio-storage-server` capability spec in `openspec/specs/`, merged from
+  the archived `harden-blob-server` change: health, Matrix OpenID session,
+  streaming blob upload/download, persistent sessions, structured access
+  log, and deployment contract.
 - Dictaphone capture engine in `zikos-audio` (desktop-first): records
   16-bit PCM from the system input (48 kHz stereo by default, falling
   back to the nearest device-supported format and reporting that
