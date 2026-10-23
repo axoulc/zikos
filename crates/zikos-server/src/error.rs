@@ -6,6 +6,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::json;
 
 use crate::auth::AuthError;
+use crate::sessions::SessionError;
 use crate::store::StoreError;
 
 #[derive(Debug, thiserror::Error)]
@@ -47,11 +48,18 @@ impl From<AuthError> for ApiError {
     }
 }
 
+impl From<SessionError> for ApiError {
+    fn from(_: SessionError) -> Self {
+        ApiError::Internal
+    }
+}
+
 impl From<StoreError> for ApiError {
     fn from(e: StoreError) -> Self {
         match e {
             StoreError::NotFound(_) => ApiError::NotFound,
             StoreError::InvalidId(id) => ApiError::BadRequest(format!("invalid blob id {id:?}")),
+            StoreError::TooLarge => ApiError::PayloadTooLarge,
             StoreError::Io(_) => ApiError::Internal,
         }
     }

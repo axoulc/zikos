@@ -58,6 +58,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Streaming request/response bodies (ReaderStream) — pure Rust, tokio stack
+tokio-util = { version = "0.7", features = ["io"] }
 async-trait = "0.1"
 
 # Testing

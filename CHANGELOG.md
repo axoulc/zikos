@@ -10,6 +10,14 @@ Every commit adds its entry under `## [Unreleased]` — see `AGENTS.md`.
 ## [Unreleased]
 
 ### Added
+- Hardened audio blob server (`zikos-server`): session tokens now survive
+  server restarts via a persistent file-backed registry (owner-only
+  permissions, crash-tolerant), every response carries an `x-request-id`
+  echoed in a structured JSON access log on stderr (method, path, status,
+  latency, user id — never blob contents, bodies, or credentials), and the
+  Matrix OpenID verifier is now integration-tested against a mock
+  homeserver speaking the real federation protocol, including the SSRF
+  guard (invalid homeserver names never trigger an outbound request).
 - Dictaphone capture engine in `zikos-audio` (desktop-first): records
   16-bit PCM from the system input (48 kHz stereo by default, falling
   back to the nearest device-supported format and reporting that
@@ -29,3 +37,14 @@ Every commit adds its entry under `## [Unreleased]` — see `AGENTS.md`.
   capabilities in `specs/`, prompt playbook in `specs/PROMPTS.md`, workflow
   mandated in `AGENTS.md`.
 - CI on every push: rustfmt check, clippy `-D warnings`, full test suite.
+
+### Changed
+- Blob uploads and downloads stream: the server pipes request bodies to
+  disk chunk by chunk (temp file + atomic rename, size cap enforced
+  mid-stream with nothing left behind on abort) and serves downloads
+  straight from the file handle — a recording upload no longer buffers a
+  whole blob (up to 512 MiB) in memory.
+
+### Fixed
+- The Matrix OpenID access token is now URL-encoded when calling the
+  homeserver federation endpoint instead of being interpolated raw.

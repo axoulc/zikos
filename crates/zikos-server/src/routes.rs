@@ -1,24 +1,27 @@
 //! HTTP surface of the Zikos audio server.
 
-use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, State};
+use axum::body::Body;
+use axum::extract::{FromRequestParts, Path, Request, State};
 use axum::http::request::Parts;
 use axum::http::{StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::auth::{OpenIdVerifier, SessionRegistry};
+use crate::access_log::{LogSink, access_log};
+use crate::auth::OpenIdVerifier;
 use crate::error::ApiError;
+use crate::sessions::SessionStore;
 use crate::store::BlobStore;
 
 #[derive(Clone)]
 pub struct ServerConfig {
     /// Hard cap on a single blob upload. Default: 512 MiB — about 50 minutes
-    /// of stereo 24-bit/48 kHz FLAC, enough for a rehearsal take.
+    /// of stereo 24-bit/48 kHz FLAC, enough for a rehearsal take. Enforced
+    /// incrementally by the streaming store, which counts every chunk.
     pub max_blob_bytes: usize,
 }
 
@@ -33,21 +36,22 @@ impl Default for ServerConfig {
 #[derive(Clone)]
 pub struct AppState {
     pub verifier: Arc<dyn OpenIdVerifier>,
-    pub sessions: SessionRegistry,
+    pub sessions: Arc<dyn SessionStore>,
     pub blobs: Arc<dyn BlobStore>,
     pub config: ServerConfig,
+    pub log_sink: Arc<dyn LogSink>,
 }
 
 pub fn router(state: AppState) -> Router {
-    let max = state.config.max_blob_bytes;
     Router::new()
         .route("/healthz", get(health))
         .route("/v1/session", post(create_session))
-        .route(
-            "/v1/blobs",
-            post(create_blob).route_layer(DefaultBodyLimit::max(max)),
-        )
+        .route("/v1/blobs", post(create_blob))
         .route("/v1/blobs/{id}", get(get_blob))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            access_log,
+        ))
         .with_state(state)
 }
 
@@ -79,7 +83,7 @@ async fn create_session(
     Json(req): Json<LoginRequest>,
 ) -> Result<(StatusCode, Json<LoginResponse>), ApiError> {
     let user_id = state.verifier.verify(&req.token, &req.server_name).await?;
-    let session = state.sessions.issue(user_id.clone());
+    let session = state.sessions.issue(user_id.clone())?;
     Ok((
         StatusCode::CREATED,
         Json(LoginResponse { session, user_id }),
@@ -123,20 +127,16 @@ pub struct BlobCreated {
 async fn create_blob(
     _user: AuthedUser,
     State(state): State<AppState>,
-    body: Bytes,
+    req: Request,
 ) -> Result<(StatusCode, Json<BlobCreated>), ApiError> {
-    if body.len() > state.config.max_blob_bytes {
-        return Err(ApiError::PayloadTooLarge);
-    }
+    // The body is streamed straight to disk; it is never buffered whole.
+    // The store enforces the size cap chunk by chunk (413, nothing stored).
     let id = Uuid::new_v4().to_string();
-    state.blobs.put(&id, &body).await?;
-    Ok((
-        StatusCode::CREATED,
-        Json(BlobCreated {
-            id,
-            size: body.len() as u64,
-        }),
-    ))
+    let size = state
+        .blobs
+        .put_stream(&id, req.into_body(), state.config.max_blob_bytes as u64)
+        .await?;
+    Ok((StatusCode::CREATED, Json(BlobCreated { id, size })))
 }
 
 async fn get_blob(
@@ -144,10 +144,14 @@ async fn get_blob(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
-    let bytes = state.blobs.get(&id).await?;
-    Ok((
-        [(header::CONTENT_TYPE, "application/octet-stream")],
-        Bytes::from(bytes),
-    )
-        .into_response())
+    // Streamed straight off disk; the blob is never buffered whole.
+    let (file, len) = state.blobs.open(&id).await?;
+    let body = Body::from_stream(tokio_util::io::ReaderStream::new(file));
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(header::CONTENT_LENGTH, len)
+        .body(body)
+        // Infallible: fixed header values, body is a stream.
+        .expect("static response parts are always valid"))
 }

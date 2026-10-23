@@ -8,12 +8,7 @@
 //!    mint an opaque session token of our own.
 
 use async_trait::async_trait;
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
-use rand::RngCore;
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -43,12 +38,26 @@ pub trait OpenIdVerifier: Send + Sync {
 
 pub struct MatrixOpenIdVerifier {
     client: reqwest::Client,
+    /// Federation base URL override. Production resolves the homeserver from
+    /// `server_name` (`https://{server_name}`); tests point this at a mock
+    /// homeserver. `server_name` is still SSRF-validated either way.
+    base_url: Option<String>,
 }
 
 impl MatrixOpenIdVerifier {
     pub fn new() -> Self {
         Self {
             client: reqwest::Client::new(),
+            base_url: None,
+        }
+    }
+
+    /// Verifier that talks to `base` instead of `https://{server_name}`.
+    /// `server_name` remains subject to the SSRF guard.
+    pub fn with_base_url(base: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base_url: Some(base.into()),
         }
     }
 }
@@ -63,12 +72,15 @@ impl Default for MatrixOpenIdVerifier {
 impl OpenIdVerifier for MatrixOpenIdVerifier {
     async fn verify(&self, access_token: &str, server_name: &str) -> Result<String, AuthError> {
         validate_server_name(server_name)?;
-        let url = format!(
-            "https://{server_name}/_matrix/federation/v1/openid/userinfo?access_token={access_token}"
-        );
+        let base = self
+            .base_url
+            .clone()
+            .unwrap_or_else(|| format!("https://{server_name}"));
+        let url = format!("{base}/_matrix/federation/v1/openid/userinfo");
         let resp = self
             .client
-            .get(&url)
+            .get(url)
+            .query(&[("access_token", access_token)])
             .send()
             .await
             .map_err(|_| AuthError::Upstream)?;
@@ -104,34 +116,6 @@ pub fn validate_server_name(name: &str) -> Result<(), AuthError> {
         Ok(())
     } else {
         Err(AuthError::InvalidServerName(name.to_string()))
-    }
-}
-
-/// Opaque session tokens, minted after OpenID verification.
-/// In-memory for now; persistence is specified as a follow-up change.
-#[derive(Default, Clone)]
-pub struct SessionRegistry {
-    sessions: Arc<Mutex<HashMap<String, String>>>, // token -> user_id
-}
-
-impl SessionRegistry {
-    pub fn issue(&self, user_id: String) -> String {
-        let mut bytes = [0u8; 32];
-        rand::rng().fill_bytes(&mut bytes);
-        let token = B64URL.encode(bytes);
-        self.sessions
-            .lock()
-            .expect("session registry poisoned")
-            .insert(token.clone(), user_id);
-        token
-    }
-
-    pub fn resolve(&self, token: &str) -> Option<String> {
-        self.sessions
-            .lock()
-            .expect("session registry poisoned")
-            .get(token)
-            .cloned()
     }
 }
 
