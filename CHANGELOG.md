@@ -10,6 +10,11 @@ Every commit adds its entry under `## [Unreleased]` — see `AGENTS.md`.
 ## [Unreleased]
 
 ### Added
+- `file-tree` capability spec in `openspec/specs/`, merged from the
+  archived `sync-tree-over-matrix` change: event-sourced tree, tree
+  operations, tree events over Matrix (custom type, idempotent,
+  offline queue with pending states), history replay, and deterministic
+  last-writer-wins conflict convergence with `Conflicts/` preservation.
 - Shared file tree synced over Matrix (`file-tree` capability, new
   `zikos-core` sync engine + `zikos-matrix` transport): tree operations
   travel as encrypted `zikos.tree.op` room events through the durable
