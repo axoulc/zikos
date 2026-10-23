@@ -317,6 +317,63 @@ pub fn sync_with_encrypted_message(
     )
 }
 
+/// A `/sync` response where `room_id` is joined and its timeline holds
+/// one `zikos.tree.op` event with the given content envelope.
+pub fn sync_with_tree_op(
+    next_batch: &str,
+    room_id: &str,
+    event_id: &str,
+    sender: &str,
+    ts: u64,
+    content: Value,
+) -> Value {
+    sync_body(
+        next_batch,
+        json!({
+            room_id: {
+                "timeline": {
+                    "limited": false,
+                    "prev_batch": "p0",
+                    "events": [{
+                        "type": "zikos.tree.op",
+                        "event_id": event_id,
+                        "sender": sender,
+                        "origin_server_ts": ts,
+                        "content": content,
+                    }],
+                },
+                "state": {"events": []},
+                "account_data": {"events": []},
+                "ephemeral": {"events": []},
+                "summary": {},
+                "unread_notifications": {},
+            },
+        }),
+    )
+}
+
+/// A `/sync` response where `room_id` is joined and its timeline holds
+/// the given events verbatim (each already carrying type/event_id/...).
+pub fn sync_with_timeline_events(next_batch: &str, room_id: &str, events: Vec<Value>) -> Value {
+    sync_body(
+        next_batch,
+        json!({
+            room_id: {
+                "timeline": {
+                    "limited": false,
+                    "prev_batch": "p0",
+                    "events": events,
+                },
+                "state": {"events": []},
+                "account_data": {"events": []},
+                "ephemeral": {"events": []},
+                "summary": {},
+                "unread_notifications": {},
+            },
+        }),
+    )
+}
+
 /// The `m.room.encryption` state event fixture.
 pub fn encryption_state_event() -> Value {
     json!({

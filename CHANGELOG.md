@@ -10,6 +10,17 @@ Every commit adds its entry under `## [Unreleased]` — see `AGENTS.md`.
 ## [Unreleased]
 
 ### Added
+- Shared file tree synced over Matrix (`file-tree` capability, new
+  `zikos-core` sync engine + `zikos-matrix` transport): tree operations
+  travel as encrypted `zikos.tree.op` room events through the durable
+  offline send queue; every client replays the room's event log (stored
+  encrypted at rest, deduplicated) into the same tree on start; offline
+  edits appear immediately marked pending until their room echo arrives.
+  Concurrent edits converge deterministically on every device —
+  last-writer-wins by origin server timestamp with event-id tiebreak —
+  and losing states are preserved under a `Conflicts/` folder instead of
+  vanishing (rules proven by property tests, including arrival-order
+  independence).
 - Hardened audio blob server (`zikos-server`): session tokens now survive
   server restarts via a persistent file-backed registry (owner-only
   permissions, crash-tolerant), every response carries an `x-request-id`

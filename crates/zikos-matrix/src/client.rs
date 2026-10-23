@@ -1,11 +1,13 @@
 //! The wrapped `matrix-sdk` client: construction, login, and session
 //! lifetime. The SDK client never appears in this crate's public API.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use matrix_sdk::send_queue::RoomSendQueueUpdate;
+use zikos_core::tree::TreeOp;
+
 use tokio::sync::broadcast;
 
 use crate::delivery::{DeliveryEvent, SendPath};
@@ -13,6 +15,7 @@ use crate::error::MatrixError;
 use crate::message::{self, MessageEvent};
 use crate::message_log::MessageLog;
 use crate::session_store;
+use crate::tree::{self, PendingTreeOp, RoomTree, TreeEvent, TreeLog};
 
 /// A logged-in Matrix session for one Zikos account.
 ///
@@ -22,6 +25,10 @@ pub struct Client {
     inner: matrix_sdk::Client,
     message_tx: broadcast::Sender<MessageEvent>,
     log: Arc<Mutex<MessageLog>>,
+    tree_tx: broadcast::Sender<TreeEvent>,
+    tree_log: Arc<Mutex<TreeLog>>,
+    /// Local tree ops awaiting their room echo, oldest first.
+    tree_outbox: Arc<Mutex<Vec<PendingTreeOp>>>,
     delivery: Arc<SendPath>,
     /// Incremental-sync cursor. The SDK's own token isn't publicly
     /// readable, so we track it ourselves (plaintext: an opaque cursor,
@@ -132,11 +139,16 @@ impl Client {
 
         let log = Arc::new(Mutex::new(MessageLog::open(store_path, passphrase)?));
         let message_tx = message::attach(&inner, log.clone(), Arc::from(passphrase));
+        let tree_log = Arc::new(Mutex::new(TreeLog::open(store_path, passphrase)?));
+        let tree_tx = tree::attach(&inner, tree_log.clone(), Arc::from(passphrase));
         let delivery = attach_send_path(&inner);
         Ok(Self {
             inner,
             message_tx,
             log,
+            tree_tx,
+            tree_log,
+            tree_outbox: Arc::new(Mutex::new(Vec::new())),
             delivery,
             sync_token: Mutex::new(read_sync_token(store_path)),
             sync_token_path: store_path.join(SYNC_TOKEN_FILE),
@@ -166,11 +178,16 @@ impl Client {
             .map_err(MatrixError::from)?;
         let log = Arc::new(Mutex::new(MessageLog::open(store_path, passphrase)?));
         let message_tx = message::attach(&inner, log.clone(), Arc::from(passphrase));
+        let tree_log = Arc::new(Mutex::new(TreeLog::open(store_path, passphrase)?));
+        let tree_tx = tree::attach(&inner, tree_log.clone(), Arc::from(passphrase));
         let delivery = attach_send_path(&inner);
         Ok(Self {
             inner,
             message_tx,
             log,
+            tree_tx,
+            tree_log,
+            tree_outbox: Arc::new(Mutex::new(Vec::new())),
             delivery,
             sync_token: Mutex::new(read_sync_token(store_path)),
             sync_token_path: store_path.join(SYNC_TOKEN_FILE),
@@ -189,6 +206,53 @@ impl Client {
         self.message_tx.subscribe()
     }
 
+    /// Subscribe to tree events arriving through sync (the replay
+    /// inputs; see [`crate::room_tree`]). Every receiver keeps its own
+    /// backlog; late subscribers see only future events.
+    pub fn tree_events(&self) -> broadcast::Receiver<TreeEvent> {
+        self.tree_tx.subscribe()
+    }
+
+    /// The synced state of one room's tree: the committed replay of the
+    /// room's event log plus pending local ops applied optimistically.
+    /// Pending ops whose echo has already arrived (same author, same op,
+    /// in the committed log) are dropped from the overlay — the room log
+    /// is the single source of truth.
+    pub fn room_tree(&self, room_id: &str) -> RoomTree {
+        let committed_events = self
+            .tree_log
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .events(room_id);
+        let committed = zikos_core::tree_sync::replay(&committed_events);
+        let mut outbox = self.tree_outbox.lock().unwrap_or_else(|p| p.into_inner());
+        // Reconcile: an echo in the committed log clears the pending op.
+        let mine = self.user_id();
+        outbox.retain(|pending| {
+            pending.room_id == room_id
+                && !committed_events
+                    .iter()
+                    .any(|e| Some(e.author.as_str()) == mine.as_deref() && e.op == pending.op)
+        });
+        let mut tree = committed.tree.clone();
+        let mut pending_nodes = HashSet::new();
+        for pending in outbox.iter().filter(|p| p.room_id == room_id) {
+            if tree.apply(&pending.op).is_ok() {
+                pending_nodes.insert(match &pending.op {
+                    TreeOp::Create { id, .. }
+                    | TreeOp::Rename { id, .. }
+                    | TreeOp::Move { id, .. }
+                    | TreeOp::Delete { id } => *id,
+                });
+            }
+        }
+        RoomTree {
+            committed,
+            tree,
+            pending_nodes,
+        }
+    }
+
     /// Subscribe to delivery-state changes of outgoing messages
     /// (`sending` → `sent`/`failed`, retries, restart recovery).
     pub fn deliveries(&self) -> broadcast::Receiver<DeliveryEvent> {
@@ -204,7 +268,67 @@ impl Client {
         use matrix_sdk::ruma::events::AnyMessageLikeEventContent;
         use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
 
-        let owned_room_id: matrix_sdk::ruma::OwnedRoomId = room_id
+        self.enqueue_and_identify(room_id, |queue| async move {
+            queue
+                .send(AnyMessageLikeEventContent::RoomMessage(
+                    RoomMessageEventContent::text_plain(body),
+                ))
+                .await
+                .map(|_| ())
+        })
+        .await
+    }
+
+    /// Queue a tree operation as a `zikos.tree.op` room event for
+    /// `room_id`. Same durability and delivery-state semantics as
+    /// [`Client::send_text`]; the content travels inside the room's
+    /// encryption envelope like every message.
+    pub async fn send_tree_op(
+        &self,
+        room_id: &str,
+        content: &zikos_core::tree_sync::TreeOpContent,
+    ) -> Result<String, MatrixError> {
+        let json = serde_json::to_string(content)
+            .map_err(|e| MatrixError::Store(format!("tree op serialization failed: {e}")))?;
+        let raw = matrix_sdk::ruma::serde::Raw::<
+            matrix_sdk::ruma::events::AnyMessageLikeEventContent,
+        >::from_json_string(json)
+        .map_err(|e| MatrixError::Store(format!("tree op serialization failed: {e}")))?;
+        let event_type = crate::tree::TREE_EVENT_TYPE.to_owned();
+        let transaction_id = self
+            .enqueue_and_identify(room_id, move |queue| async move {
+                queue.send_raw(raw, event_type).await.map(|_| ())
+            })
+            .await?;
+        // Optimistic overlay: the op shows up (pending) until its room
+        // echo arrives through sync.
+        self.tree_outbox
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(PendingTreeOp {
+                room_id: room_id.to_owned(),
+                transaction_id: transaction_id.clone(),
+                op: content.op.clone(),
+            });
+        Ok(transaction_id)
+    }
+
+    /// Enqueue an event on the room's durable send queue and return the
+    /// transaction ID of exactly our enqueue (identified by diffing the
+    /// queue's local echoes before/after, serialized per room).
+    async fn enqueue_and_identify<F, Fut>(
+        &self,
+        room_id: &str,
+        enqueue: F,
+    ) -> Result<String, MatrixError>
+    where
+        F: FnOnce(matrix_sdk::send_queue::RoomSendQueue) -> Fut,
+        Fut: std::future::Future<Output = Result<(), matrix_sdk::send_queue::RoomSendQueueError>>,
+    {
+        use matrix_sdk::ruma::OwnedRoomId;
+        use matrix_sdk::send_queue::RoomSendQueueUpdate;
+
+        let owned_room_id: OwnedRoomId = room_id
             .try_into()
             .map_err(|e| MatrixError::Homeserver(format!("invalid room ID: {e}")))?;
         let room = self
@@ -230,10 +354,7 @@ impl Client {
         // A previous failure run may have disabled the whole queue.
         self.inner.send_queue().set_enabled(true).await;
 
-        queue
-            .send(AnyMessageLikeEventContent::RoomMessage(
-                RoomMessageEventContent::text_plain(body),
-            ))
+        enqueue(queue)
             .await
             .map_err(|e| MatrixError::Homeserver(e.to_string()))?;
 

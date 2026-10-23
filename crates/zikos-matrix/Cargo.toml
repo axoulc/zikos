@@ -6,6 +6,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+# The ruma event-content derive emits cfgs for ruma's unstable
+# exhaustive-types opt-in; register them so the compiler knows them.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ruma_unstable_exhaustive_types)'] }
+
 [dependencies]
 matrix-sdk = { workspace = true }
 matrix-sdk-store-encryption = { workspace = true }
@@ -13,6 +18,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+uuid = { workspace = true }
+zikos-core = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -19,11 +19,13 @@ mod encrypted;
 mod message;
 mod message_log;
 mod session_store;
+mod tree;
 
 pub use client::{Client, RoomEncryption};
 pub use delivery::{DeliveryEvent, DeliveryState};
 pub use error::MatrixError;
 pub use message::{MessageBody, MessageEvent};
+pub use tree::{TREE_EVENT_TYPE, ZikosTreeOpEventContent};
 
 #[cfg(test)]
 mod tests {

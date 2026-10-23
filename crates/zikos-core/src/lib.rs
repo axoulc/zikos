@@ -6,6 +6,7 @@
 
 pub mod meta;
 pub mod tree;
+pub mod tree_sync;
 
 pub use meta::{AudioFormat, RecordingMeta};
 pub use tree::{FileTree, Node, NodeId, NodeKind, TreeOp};
