@@ -42,8 +42,15 @@ base64 = "0.22"
 # Crypto (pure Rust, RustCrypto)
 aes-gcm = "0.10"
 
-# Audio (pure Rust)
+# Audio (pure Rust; cpal binds the platform audio API — ALSA/CoreAudio —
+# and is the one C dependency in the audio stack, by spec mandate)
 hound = "3.5"
+cpal = "0.18"
+flacenc = "0.5"
+# Dev-only FLAC decoder used to verify transcodes independently
+claxon = "0.4"
+# Local-timezone take naming (pure Rust)
+jiff = "0.2"
 
 # Server
 axum = "0.8"

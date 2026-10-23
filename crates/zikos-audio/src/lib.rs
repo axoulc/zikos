@@ -1,30 +1,73 @@
-//! Zikos audio engine.
+//! Zikos audio engine: the dictaphone capture pipeline.
 //!
-//! Today this crate covers the deterministic parts: WAV encoding/inspection
-//! and recorder configuration policy. Device capture (cpal on desktop, with
-//! Oboe/CoreAudio underneath) and FLAC transcoding (`flacenc`, pure Rust)
-//! arrive as OpenSpec changes — see `specs/audio-recording.md`.
+//! Capture streams through a [`SampleSource`] (deterministic fixtures in
+//! tests, [`CpalSource`] from the system input on desktop) into a
+//! crash-safe staged WAV ([`RecorderSession`]), then finalizes to
+//! lossless FLAC with `RecordingMeta` and `take-YYYYMMDD-HHMM` naming.
+//! Sessions killed mid-recording are detected and recovered on next
+//! start ([`recoverable_sessions`]). This module also keeps the
+//! in-memory WAV encoder/inspector and recorder configuration policy.
 
 use std::io::Cursor;
 use thiserror::Error;
 use zikos_core::AudioFormat;
 
+mod cpal_source;
+mod flac;
+mod naming;
+mod recovery;
+mod session;
+mod source;
+mod wav_stream;
+
+pub use cpal_source::{CpalSource, negotiate};
+pub use naming::default_title;
+pub use recovery::{recover, recoverable_sessions};
+pub use session::{
+    FinalizedTake, META_JSON, RecorderSession, SESSION_JSON, SessionManifest, SessionState,
+    StagedSession, TAKE_FLAC, TAKE_WAV,
+};
+pub use source::{SampleSource, SineSource, SourceFormat};
+pub use wav_stream::{StreamingWavWriter, repair_wav};
+
+/// Everything that can go wrong in the audio pipeline.
 #[derive(Debug, Error)]
 pub enum AudioError {
+    /// A WAV could not be encoded (bad chunk shape, 4 GiB ceiling).
     #[error("wav encoding failed: {0}")]
     Encode(String),
+    /// A WAV or session manifest could not be parsed.
     #[error("wav parsing failed: {0}")]
     Parse(String),
+    /// A recorder configuration or input negotiation was invalid.
     #[error("invalid recorder config: {0}")]
     InvalidConfig(String),
+    /// Filesystem I/O failed.
+    #[error("audio i/o failed: {0}")]
+    Io(#[from] std::io::Error),
+    /// hound could not read a WAV.
+    #[error("wav reader failed: {0}")]
+    Hound(#[from] hound::Error),
+    /// Generated recording metadata failed validation.
+    #[error("invalid recording metadata: {0}")]
+    Meta(String),
+    /// The audio device or stream failed (cpal).
+    #[error("audio device error: {0}")]
+    Device(#[from] cpal::Error),
+    /// Persisting/loading JSON state failed.
+    #[error("serialization failed: {0}")]
+    Serde(#[from] serde_json::Error),
 }
 
 /// Policy for a recording session. Defaults target musical takes: 48 kHz
 /// stereo, lossless.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecorderConfig {
+    /// Container the take is finalized to.
     pub format: AudioFormat,
+    /// Requested capture rate in Hz; the source's actual rate wins.
     pub sample_rate_hz: u32,
+    /// Requested channel count; the source's actual count wins.
     pub channels: u16,
 }
 
@@ -39,6 +82,7 @@ impl Default for RecorderConfig {
 }
 
 impl RecorderConfig {
+    /// Reject out-of-range rates (8–192 kHz) and channel counts (1–32).
     pub fn validate(&self) -> Result<(), AudioError> {
         if !(8_000..=192_000).contains(&self.sample_rate_hz) {
             return Err(AudioError::InvalidConfig(format!(
@@ -59,11 +103,15 @@ impl RecorderConfig {
 /// Parsed facts about a WAV buffer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WavInfo {
+    /// Sample rate in Hz.
     pub sample_rate_hz: u32,
+    /// Number of interleaved channels.
     pub channels: u16,
+    /// Bits per sample (Zikos captures at 16).
     pub bits_per_sample: u16,
     /// Frames (samples per channel), matching the WAV fact/data chunk.
     pub frames: u32,
+    /// Frames divided by sample rate.
     pub duration_secs: f64,
 }
 

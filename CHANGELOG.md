@@ -10,6 +10,14 @@ Every commit adds its entry under `## [Unreleased]` — see `AGENTS.md`.
 ## [Unreleased]
 
 ### Added
+- Dictaphone capture engine in `zikos-audio` (desktop-first): records
+  16-bit PCM from the system input (48 kHz stereo by default, falling
+  back to the nearest device-supported format and reporting that
+  honestly), streams every sample to disk as WAV while recording, and on
+  stop finalizes the take to lossless FLAC (pure-Rust `flacenc`) with
+  `take-YYYYMMDD-HHMM` local-time naming and full recording metadata.
+  Takes interrupted by a crash or OS kill are detected on next start and
+  repaired for finalize-or-discard — no captured audio is silently lost.
 - Project bootstrap: Cargo workspace with `zikos-core` (event-sourced shared
   file tree + recording metadata), `zikos-crypto` (AES-256-GCM client-side
   file encryption), `zikos-audio` (WAV encode/parse, recorder policy),
