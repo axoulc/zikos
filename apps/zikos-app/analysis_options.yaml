@@ -7,6 +7,16 @@
 
 # The following line activates a set of recommended lints for Flutter apps,
 # packages, and plugins designed to encourage good coding practices.
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - windows/**
+    - macos/**
+    - linux/**
+    # Vendored flutter_rust_bridge/cargokit build tooling, not project code.
+    - rust_builder/**
 include: package:flutter_lints/flutter.yaml
 
 linter:

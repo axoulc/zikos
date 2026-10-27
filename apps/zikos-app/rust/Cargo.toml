@@ -1,5 +1,9 @@
 [package]
-name = "zikos-bridge"
+# Underscored on purpose: cargokit derives the built library's file name
+# (libzikos_bridge.so/.a) from the package name verbatim, and the Flutter
+# plugin integration files (podspec, apply_cargokit) reference
+# `zikos_bridge` — a dashed name would never match the artifacts.
+name = "zikos_bridge"
 description = "flutter_rust_bridge surface over the Zikos Rust core: the only code the Flutter app calls"
 version.workspace = true
 edition.workspace = true

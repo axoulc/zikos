@@ -1,5 +1,19 @@
 # Project-level configuration.
 cmake_minimum_required(VERSION 3.13)
+
+# flutter_tools forces CC=clang / CXX=clang++ into this configure. When the
+# installed clang detects a newest GCC that ships without its C++ dev files
+# (e.g. gcc-14 present but libstdc++-14-dev absent), linking fails with
+# "cannot find -lstdc++". Prefer the GNU compilers when they are available.
+if(DEFINED ENV{CXX} AND "$ENV{CXX}" MATCHES "clang")
+  find_program(GNU_CXX g++)
+  find_program(GNU_C gcc)
+  if(GNU_CXX AND GNU_C)
+    set(CMAKE_CXX_COMPILER ${GNU_CXX} CACHE FILEPATH "C++ compiler" FORCE)
+    set(CMAKE_C_COMPILER ${GNU_C} CACHE FILEPATH "C compiler" FORCE)
+  endif()
+endif()
+
 project(runner LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change

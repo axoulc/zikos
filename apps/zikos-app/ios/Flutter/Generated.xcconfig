@@ -1,6 +1,7 @@
 // This is a generated file; do not edit or check into version control.
-FLUTTER_ROOT=/home/axel-fpoc/development/flutter
-FLUTTER_APPLICATION_PATH=/home/axel-fpoc/Documents/PERSO/zikos/apps/zikos-app
+FLUTTER_ROOT=/home/axoul/flutter
+FLUTTER_APPLICATION_PATH=/home/axoul/Documents/zikos/apps/zikos-app
+FLUTTER_FRAMEWORK_SWIFT_PACKAGE_PATH=/home/axoul/Documents/zikos/apps/zikos-app/ios/Flutter/ephemeral/Packages/.packages/FlutterFramework
 COCOAPODS_PARALLEL_CODE_SIGN=true
 FLUTTER_TARGET=lib/main.dart
 FLUTTER_BUILD_DIR=build

@@ -52,9 +52,17 @@ Every commit adds its entry under `## [Unreleased]` — see `AGENTS.md`.
 - Finalize-format selection in the dictaphone engine: takes finalize to
   FLAC (unchanged default) or keep the raw WAV unchanged when configured.
 - The whole UI is bound to the Rust core through a new flutter_rust_bridge
-  crate (`zikos-bridge`, with the generated Dart bindings compiled into
+  crate (`zikos_bridge`, with the generated Dart bindings compiled into
   the app via cargokit): Dart renders and routes only, every screen is
   widget-tested against an in-memory fake of the bridge.
+
+### Fixed
+- `flutter run`/`flutter build` on Linux desktop: the runner now uses the
+  GNU compilers when the forced clang cannot link libstdc++ (a
+  half-installed newer GCC breaks clang's toolchain detection), and the
+  bridge crate is named `zikos_bridge` so cargokit actually finds and
+  copies the built library into the app bundle (a dashed name never
+  matched cargo's underscored output).
 
 ### Added
 - `file-tree` capability spec in `openspec/specs/` updated with the

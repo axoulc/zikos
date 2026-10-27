@@ -2,6 +2,18 @@
 
 A new Flutter project.
 
+## Linux desktop prerequisites
+
+Besides `flutter doctor`'s Linux toolchain (clang, cmake, ninja, pkg-config),
+the Rust core pulls in system libraries that need their development headers:
+
+```bash
+sudo apt install libasound2-dev   # cpal/alsa-sys — audio capture
+```
+
+GTK development packages (`libgtk-3-dev`) come with the usual
+`flutter create` Linux setup.
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.

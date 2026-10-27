@@ -1,7 +1,8 @@
 #!/bin/sh
 # This is a generated file; do not edit or check into version control.
-export "FLUTTER_ROOT=/home/axel-fpoc/development/flutter"
-export "FLUTTER_APPLICATION_PATH=/home/axel-fpoc/Documents/PERSO/zikos/apps/zikos-app"
+export "FLUTTER_ROOT=/home/axoul/flutter"
+export "FLUTTER_APPLICATION_PATH=/home/axoul/Documents/zikos/apps/zikos-app"
+export "FLUTTER_FRAMEWORK_SWIFT_PACKAGE_PATH=/home/axoul/Documents/zikos/apps/zikos-app/ios/Flutter/ephemeral/Packages/.packages/FlutterFramework"
 export "COCOAPODS_PARALLEL_CODE_SIGN=true"
 export "FLUTTER_TARGET=lib/main.dart"
 export "FLUTTER_BUILD_DIR=build"

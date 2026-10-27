@@ -5009,25 +5009,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zikos-bridge"
-version = "0.1.0"
-dependencies = [
- "flutter_rust_bridge",
- "jiff",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "url",
- "uuid",
- "zikos-audio",
- "zikos-core",
- "zikos-crypto",
- "zikos-matrix",
-]
-
-[[package]]
 name = "zikos-core"
 version = "0.1.0"
 dependencies = [
@@ -5107,6 +5088,25 @@ dependencies = [
  "tower",
  "uuid",
  "wiremock",
+]
+
+[[package]]
+name = "zikos_bridge"
+version = "0.1.0"
+dependencies = [
+ "flutter_rust_bridge",
+ "jiff",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
+ "uuid",
+ "zikos-audio",
+ "zikos-core",
+ "zikos-crypto",
+ "zikos-matrix",
 ]
 
 [[package]]
